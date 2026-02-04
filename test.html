@@ -61,6 +61,7 @@
             font-size: 14px;
             margin-bottom: 20px;
             text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            min-height: 40px;
         }
         #startScreen {
             position: absolute;
@@ -81,6 +82,8 @@
             font-size: 14px;
             color: #888;
             margin-bottom: 30px;
+            text-align: center;
+            padding: 0 20px;
         }
         #startBtn {
             padding: 15px 40px;
@@ -98,7 +101,7 @@
 <body>
     <div id="startScreen">
         <h1>Vision Assistant</h1>
-        <p>Test avec camera iPhone</p>
+        <p>100% Gemini - Sans quota OpenAI<br>TTS par le navigateur</p>
         <button id="startBtn">Demarrer</button>
     </div>
 
@@ -122,6 +125,37 @@
         const statusEl = document.getElementById('status');
 
         let stream = null;
+        let synth = window.speechSynthesis;
+        let frenchVoice = null;
+
+        // Trouver la voix francaise
+        function loadVoices() {
+            const voices = synth.getVoices();
+            frenchVoice = voices.find(v => v.lang.startsWith('fr')) || voices[0];
+            console.log('Voice:', frenchVoice?.name);
+        }
+
+        synth.onvoiceschanged = loadVoices;
+        loadVoices();
+
+        // TTS avec Web Speech API
+        function speak(text) {
+            return new Promise((resolve) => {
+                // Stop any current speech
+                synth.cancel();
+
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.voice = frenchVoice;
+                utterance.lang = 'fr-FR';
+                utterance.rate = 1.1;
+                utterance.pitch = 1;
+
+                utterance.onend = resolve;
+                utterance.onerror = resolve;
+
+                synth.speak(utterance);
+            });
+        }
 
         startBtn.onclick = async () => {
             try {
@@ -155,7 +189,7 @@
                 ctx.drawImage(camera, 0, 0);
 
                 const imageData = canvas.toDataURL('image/jpeg', 0.8);
-                statusEl.textContent = 'Analyse en cours...';
+                statusEl.textContent = 'Analyse Gemini...';
 
                 // Envoyer au serveur
                 const response = await fetch(SERVER + '/analyze', {
@@ -166,19 +200,18 @@
 
                 const data = await response.json();
 
-                if (data.success && data.audio) {
-                    statusEl.textContent = 'Reponse en ' + data.timing + 'ms';
+                if (data.success && data.text) {
+                    statusEl.textContent = data.text;
                     captureBtn.className = 'success';
 
-                    // Jouer audio
-                    const audio = new Audio('data:audio/mpeg;base64,' + data.audio);
-                    audio.play();
+                    // TTS avec le navigateur
+                    await speak(data.text);
 
-                    // Reset apres 3s
+                    // Reset apres 2s
                     setTimeout(() => {
                         captureBtn.className = '';
                         statusEl.textContent = 'Pret';
-                    }, 3000);
+                    }, 2000);
                 } else {
                     throw new Error(data.error || 'Erreur serveur');
                 }
