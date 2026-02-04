@@ -61,7 +61,8 @@
             font-size: 14px;
             margin-bottom: 20px;
             text-shadow: 0 1px 3px rgba(0,0,0,0.8);
-            min-height: 40px;
+            min-height: 60px;
+            padding: 0 10px;
         }
         #startScreen {
             position: absolute;
@@ -101,7 +102,7 @@
 <body>
     <div id="startScreen">
         <h1>Vision Assistant</h1>
-        <p>100% Gemini - Sans quota OpenAI<br>TTS par le navigateur</p>
+        <p>Connecte tes AirPods AVANT de cliquer</p>
         <button id="startBtn">Demarrer</button>
     </div>
 
@@ -127,51 +128,109 @@
         let stream = null;
         let synth = window.speechSynthesis;
         let frenchVoice = null;
+        let audioContext = null;
 
-        // Trouver la voix francaise
+        // Charger les voix
         function loadVoices() {
             const voices = synth.getVoices();
-            frenchVoice = voices.find(v => v.lang.startsWith('fr')) || voices[0];
-            console.log('Voice:', frenchVoice?.name);
+            // Priorité : voix française de qualité
+            frenchVoice = voices.find(v => v.lang === 'fr-FR' && v.name.includes('Thomas')) ||
+                          voices.find(v => v.lang === 'fr-FR' && v.name.includes('Amelie')) ||
+                          voices.find(v => v.lang === 'fr-FR') ||
+                          voices.find(v => v.lang.startsWith('fr')) ||
+                          voices[0];
+            console.log('Voix chargée:', frenchVoice?.name);
         }
 
         synth.onvoiceschanged = loadVoices;
-        loadVoices();
+        setTimeout(loadVoices, 100);
+        setTimeout(loadVoices, 500);
 
-        // TTS avec Web Speech API
+        // TTS - avec workaround iOS
         function speak(text) {
             return new Promise((resolve) => {
-                // Stop any current speech
+                // iOS fix: cancel any pending speech
                 synth.cancel();
 
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.voice = frenchVoice;
-                utterance.lang = 'fr-FR';
-                utterance.rate = 1.1;
-                utterance.pitch = 1;
+                // iOS fix: small delay
+                setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.voice = frenchVoice;
+                    utterance.lang = 'fr-FR';
+                    utterance.rate = 1.0;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
 
-                utterance.onend = resolve;
-                utterance.onerror = resolve;
+                    utterance.onend = () => {
+                        console.log('TTS terminé');
+                        resolve();
+                    };
+                    utterance.onerror = (e) => {
+                        console.error('TTS erreur:', e);
+                        resolve();
+                    };
 
-                synth.speak(utterance);
+                    // iOS fix: keep speech synthesis alive
+                    const intervalId = setInterval(() => {
+                        if (!synth.speaking) {
+                            clearInterval(intervalId);
+                        } else {
+                            synth.pause();
+                            synth.resume();
+                        }
+                    }, 10000);
+
+                    synth.speak(utterance);
+                    console.log('TTS démarré:', text.substring(0, 50));
+                }, 100);
             });
+        }
+
+        // Test audio au démarrage (débloque iOS)
+        function unlockAudio() {
+            // Créer AudioContext
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+            // Jouer un son silencieux
+            const buffer = audioContext.createBuffer(1, 1, 22050);
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.start();
+
+            // Test TTS avec texte court
+            const testUtterance = new SpeechSynthesisUtterance('.');
+            testUtterance.volume = 0.01;
+            synth.speak(testUtterance);
+
+            console.log('Audio débloqué');
         }
 
         startBtn.onclick = async () => {
             try {
-                // Demander acces camera arriere
+                // Débloquer audio iOS
+                unlockAudio();
+
+                // Demander accès caméra
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
                     audio: false
                 });
                 camera.srcObject = stream;
 
+                // Recharger les voix après interaction
+                loadVoices();
+
                 startScreen.classList.add('hidden');
                 overlay.classList.remove('hidden');
 
                 statusEl.textContent = 'Pret - Appuie sur le bouton';
+
+                // Test TTS
+                await speak('Prêt');
+
             } catch (e) {
-                alert('Erreur camera: ' + e.message);
+                alert('Erreur: ' + e.message);
             }
         };
 
@@ -188,8 +247,8 @@
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(camera, 0, 0);
 
-                const imageData = canvas.toDataURL('image/jpeg', 0.8);
-                statusEl.textContent = 'Analyse Gemini...';
+                const imageData = canvas.toDataURL('image/jpeg', 0.85);
+                statusEl.textContent = 'Analyse...';
 
                 // Envoyer au serveur
                 const response = await fetch(SERVER + '/analyze', {
@@ -204,10 +263,9 @@
                     statusEl.textContent = data.text;
                     captureBtn.className = 'success';
 
-                    // TTS avec le navigateur
+                    // TTS
                     await speak(data.text);
 
-                    // Reset apres 2s
                     setTimeout(() => {
                         captureBtn.className = '';
                         statusEl.textContent = 'Pret';
